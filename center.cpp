@@ -6,43 +6,43 @@
 #include <thread>
 #include <mutex>
 #include <fstream>
-#include <csignal>
+#include <future>
 #include "TCPSocket.h"
 
-void machineHandler(const TCPSocketPtr& client);
-bool writeFile(uint16_t index, float result);
+void machineHandler(const TCPSocketPtr &client);
+
+int writeFile(uint16_t index, float result);
 
 std::atomic_uint16_t counter = 0;
 std::atomic_uint16_t curr_counter = 0;
 std::mutex counter_mutex;
 
-void ex(int signal)
-{
-   std::abort();
-}
-
 int main()
 {
-    signal(SIGTERM, ex);
+    uint16_t a = 65535;std::cout << a << "\n";
     TCPSocketPtr server = TCPSocket::CreateTCP();
     SocketAddress address(44444, INADDR_ANY);
     if (server->Bind(address) != NO_ERROR)
     {
         return -1;
     }
-    while (server->Listen() == NO_ERROR)
+    if (server->Listen() == NO_ERROR)
     {
         SocketAddress addr;
-        auto client = server->Accept(addr);
-        if (client)
+        //TODO: fix shti
+        while (true)
         {
+            auto fut = std::async(&TCPSocket::Accept, server, std::ref(addr));
+            while (fut.wait_for(std::chrono::seconds(1)) == std::future_status::timeout)
+            {
+                std::cout << curr_counter << "\n";
+                if (curr_counter == 65535)abort();
+            }
+            auto client = fut.get();
             std::thread thr(machineHandler, client);
             thr.detach();
         }
     }
-    /*std::ofstream ofs;
-    ofs.open("../res.txt", std::ofstream::out | std::ofstream::trunc);
-    ofs.close();*/
     return 0;
 }
 
@@ -55,31 +55,45 @@ uint16_t getAddCounter()
     return temp;
 }
 
-void machineHandler(const TCPSocketPtr& client)
+void machineHandler(const TCPSocketPtr &client)
 {
+    char buffer[3];
+    buffer[0] = 'y';
     auto temp = getAddCounter();
-    while (client->Send((char*)&temp, 2))
+    memcpy(buffer + 1, (char *) &temp, 2);
+    while (client->Send(buffer, 3))
     {
-        char buffer[4];
-        client->Recieve(buffer, sizeof(float));
-        float answer = *reinterpret_cast<float*>(&buffer);
-        while (!writeFile(temp, answer)){
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        char rec_buffer[4];
+        client->Recieve(rec_buffer, sizeof(float));
+        float answer = *reinterpret_cast<float *>(&rec_buffer);
+
+        int write_file_res = writeFile(temp, answer);
+        while (write_file_res == 0 || write_file_res == -1)
+        {
+            if (write_file_res == -1)
+            {
+                buffer[0] = 'n';
+                break;
+            }
+            write_file_res = writeFile(temp, answer);
         }
         temp = getAddCounter();
+        memcpy(buffer + 1, (char *) &temp, 2);
     }
 }
 
-bool writeFile(uint16_t index, float result)
+int writeFile(uint16_t index, float result)
 {
-   if (curr_counter == 65535)std::raise(SIGTERM);
-   if (index != curr_counter) return false;
-   std::ofstream file("../res.txt", std::ios::app);
-   if (file.is_open())
-   {
-       file << index << " " << result << "\n";
-   } else std::cout << "FILE PROBLEMS";
-   file.close();
-   curr_counter++;
-   return true;
+    if (curr_counter == 65535)return -1;
+    if (index != curr_counter) return 0;
+    counter_mutex.lock();
+    std::ofstream file("res.txt", std::ios::app);
+    if (file.is_open())
+    {
+        file << index << " " << result << "\n";
+    } else std::cout << "FILE PROBLEMS";
+    file.close();
+    curr_counter++;
+    counter_mutex.unlock();
+    return 1;
 }
