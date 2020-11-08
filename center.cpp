@@ -49,8 +49,8 @@ int main()
 uint16_t getAddCounter()
 {
     counter_mutex.lock();
-    auto temp = static_cast<uint16_t>(counter);
-    counter++;
+    uint16_t temp = counter.load();
+    if (temp != 65535)counter++;
     counter_mutex.unlock();
     return temp;
 }
@@ -86,7 +86,6 @@ int writeFile(uint16_t index, float result)
 {
     if (curr_counter == 65535)return -1;
     if (index != curr_counter) return 0;
-    counter_mutex.lock();
     std::ofstream file("res.txt", std::ios::app);
     if (file.is_open())
     {
@@ -94,6 +93,5 @@ int writeFile(uint16_t index, float result)
     } else std::cout << "FILE PROBLEMS";
     file.close();
     curr_counter++;
-    counter_mutex.unlock();
     return 1;
 }
